@@ -1,0 +1,243 @@
+---
+title: "Unsupervised Learning Assignment 2"
+author: "Timothy Roelf"
+date: "31 August 2019"
+output: 
+  pdf_document:
+    toc: true
+    toc_depth: 2
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+\newpage
+
+```{r message=FALSE, warning=FALSE}
+library(tidyverse)
+library(kohonen)
+library(cluster)
+library(factoextra)
+library(clValid)
+library(fpc)
+```
+
+
+```{r}
+data <- read_csv("pokemon/Pokemon.csv")  # load the pokemon dataset
+
+str(data)  # check if all the features are numeric (they're not!) for SOM
+
+no_emerald <- c(283,284,307,308,315,335,337) # these pokemon don't appear in Emerald
+
+mega_id <- data %>% 
+  filter_all(any_vars(str_detect(.,'Mega'))) %>% 
+  select('Name')     # get the Names's of all the 'Mega' pokemon  (not gen 3)
+
+
+lame_legends <- data %>% 
+  filter(Legendary == T) %>% 
+  filter_all(any_vars(str_detect(.,'Primal'))) %>% 
+  select('Name')     # get Name's of the legendary pokemon, added to a lower Gen - after the fact  (not gen 3) 
+
+data <- data %>% 
+  filter(!Name %in% mega_id$Name, !Name %in% lame_legends$Name,
+         Generation == 3, Legendary == F, !`#` %in% no_emerald) %>% 
+  rename("Type1" = "Type 1", "Type2" = "Type 2", "Sp.Atk" = "Sp. Atk", "Sp.Def" = "Sp. Def") %>% 
+  select(-"#")
+  # only use pokemon till end Gen 3, change the Legendary attr. to a numeric equvilent
+
+data <- data %>%   # change all the type's to numeric values
+  mutate(Type1 = case_when(Type1 == "Normal" ~ 1,
+                           Type1 == "Fire" ~ 2,
+                           Type1 == "Fighting" ~ 3,
+                           Type1 == "Water" ~ 4,
+                           Type1 == "Flying" ~ 5,
+                           Type1 == "Grass" ~ 6,
+                           Type1 == "Poison" ~ 7,
+                           Type1 == "Electric" ~ 8,
+                           Type1 == "Ground" ~ 9,
+                           Type1 == "Psychic" ~ 10,
+                           Type1 == "Rock" ~ 11,
+                           Type1 == "Ice" ~ 12,
+                           Type1 == "Bug" ~ 13,
+                           Type1 == "Dragon" ~ 14,
+                           Type1 == "Ghost" ~ 15, 
+                           Type1 == "Dark" ~ 16,
+                           Type1 == "Steel" ~ 17,
+                           Type1 == "Fairy" ~ 18),
+           
+         Type2 = case_when(Type2 == "Normal" ~ 1,
+                           Type2 == "Fire" ~ 2,
+                           Type2 == "Fighting" ~ 3,
+                           Type2 == "Water" ~ 4,
+                           Type2 == "Flying" ~ 5,
+                           Type2 == "Grass" ~ 6,
+                           Type2 == "Poison" ~ 7,
+                           Type2 == "Electric" ~ 8,
+                           Type2 == "Ground" ~ 9,
+                           Type2 == "Psychic" ~ 10,
+                           Type2 == "Rock" ~ 11,
+                           Type2 == "Ice" ~ 12,
+                           Type2 == "Bug" ~ 13,
+                           Type2 == "Dragon" ~ 14,
+                           Type2 == "Ghost" ~ 15, 
+                           Type2 == "Dark" ~ 16,
+                           Type2 == "Steel" ~ 17,
+                           Type2 == "Fairy" ~ 18,
+                           is.na(Type2) ~ 0))
+png("boxplot.png")
+data %>% 
+  select(-"Name", -"Legendary", -"Generation") %>% 
+  boxplot()  # inspect the features of the data
+dev.off()
+
+
+
+hist_T1 <- data %>% select(Type1) # select Type 1 for histograming
+png("type1.png")
+hist_T1$Type1 %>% hist(main = "Pokemon Type frequency", xlab = "Type 1",
+                       breaks = c(0:4,5:18), 
+                       xlim = c(0,19), ylim = c(0,23),
+                       col = c("#ff3300","#0000ff","#00ff00","#ffff00","#999999","#993300","#9933cc",
+                               "#6666ff","#000000", "#99ccff","#ff66ff","#666699","#33ffff",
+                               "#cccc99","#996600","#ff9933","#9933cc","#ff33ff"))
+
+legend("topright", legend = c("Normal","Fire","Fighting","Water","Flying","Grass","Poison",
+                            "Electric","Ground","Psychic","Rock","Ice","Bug","Dragon",
+                            "Ghost","Dark","Steel", "Fairy"), cex = 0.8,
+       fill = c("#ff3300","#0000ff", "#00ff00","#ffff00","#999999","#993300","#9933cc","#6666ff",
+                "#000000", "#99ccff","#ff66ff","#666699","#33ffff",
+                "#cccc99","#996600","#ff9933","#9933cc","#ff33ff"))
+dev.off()
+
+hist_T2 <- data %>% select(Type2) # select Type 2 for histograming
+png("type2.png")
+hist_T2$Type2 %>% hist(main = "Pokemon Type frequency", xlab = "Type 2",
+                       breaks = -1:19, 
+                       xlim = c(-1,18), ylim = c(0,64),
+                       col = c("#ff3300","#0000ff","#00ff00","#ffff00","#999999","#993300","#9933cc",
+                               "#6666ff","#000000", "#99ccff","#ff66ff","#666699","#33ffff",
+                               "#cccc99","#996600","#ff9933","#9933cc","#ff33ff","#330000"))
+
+legend("topright", legend = c("None","Normal","Fire","Fighting","Water","Flying","Grass","Poison",
+                            "Electric","Ground","Psychic","Rock","Ice","Bug","Dragon",
+                            "Ghost","Dark","Steel","Fairy"), cex = 0.8,
+       fill = c("#ff3300","#0000ff", "#00ff00","#ffff00","#999999","#993300","#9933cc","#6666ff",
+                "#000000", "#99ccff","#ff66ff","#666699","#33ffff",
+                "#cccc99","#996600","#ff9933","#9933cc","#ff33ff","#330000"))
+dev.off()
+
+
+
+
+std_data <- data %>% 
+  select(-"Name", -"Generation", -"Legendary", -"Type2") %>% 
+  scale()
+
+#   as.matrix() # scale and centre the data
+
+lbls <- data %>% select(Name)
+```
+
+
+
+```{r}
+# Self-organizing map
+som_grid <- somgrid(xdim = 10, ydim = 10, topo = "hexagonal")
+set.seed(123)
+
+som_model <- som(std_data, grid = som_grid,
+                 rlen = 2500, 
+                 alpha = c(0.5,0.01),
+                 #radius = c(0.5,0.01),
+                 keep.data = T)
+
+png("som_changes.png")
+plot(som_model, type = "changes", shape = "straight")
+dev.off()
+
+png("som_counts.png")
+plot(som_model, type = "counts", shape = "straight")
+dev.off()
+
+png("som_codes.png")
+plot(som_model, type = "codes", shape = "straight")
+dev.off()
+
+png("som_quality.png")
+plot(som_model, type = "quality", shape = "straight")
+dev.off()
+
+png("som_dist.png")
+plot(som_model, type = "dist.neighbours", palette.name=grey.colors, shape = "straight")
+dev.off()
+
+png("som_mapping.png")
+plot(som_model, type = "mapping", labels = lbls$Name, cex = 1.2, shape = "straight")
+dev.off()
+
+temp <- som_model$codes[[1]]
+
+png("som_prop1.png")
+par(mfrow=c(2,2))
+for(i in 1:4){
+plot(som_model, type = "property", property = temp[,i], main=colnames(std_data)[i], shape = "straight")
+}
+dev.off()
+
+png("som_prop2.png")
+par(mfrow=c(2,2))
+for(i in 5:8){
+plot(som_model, type = "property", property = temp[,i], main=colnames(std_data)[i], shape = "straight")
+}
+dev.off()
+
+
+
+plot(som_model, type = "changes",shape = "straight")
+plot(som_model, type = "counts", shape = "straight")
+plot(som_model, type = "codes", shape = "straight")
+plot(som_model, type = "quality", shape = "straight")
+plot(som_model, type = "dist.neighbours", palette.name=grey.colors, shape = "straight")
+plot(som_model, type = "mapping", labels = lbls$Name, cex = 0.6, shape = "straight")
+par(mfrow=c(2,2))
+for(i in 1:4){
+plot(som_model, type = "property", property = temp[,i], main=colnames(std_data)[i], shape = "straight")
+}
+par(mfrow=c(2,2))
+for(i in 5:8){
+plot(som_model, type = "property", property = temp[,i], main=colnames(std_data)[i], shape = "straight")
+}
+
+
+#som_model$distances
+
+som_model %>% summary()
+som_model$distances
+som_model$unit.classif
+
+(mean(unit.distances(som_grid)) - mean(som_model$distances))/(mean(unit.distances(som_grid))) # check preserve topo
+
+
+(mean(dist(std_data))-mean(som_model$distances))/(mean(dist(std_data)))   # check preserve topo
+
+
+
+
+
+
+```
+
+
+```{r}
+# Clustering 
+cl_methods <- c("hierarchical","kmeans","pam")
+clus_model <- clValid(std_data[,5:9], nClust = 2:6, clMethods = cl_methods, validation = "internal")
+
+summary(clus_model)
+
+```
+
+
+
